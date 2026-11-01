@@ -6,11 +6,17 @@ class Product(models.Model):
     price = models.DecimalField(max_digits=10, decimal_places=2)
     stock = models.PositiveIntegerField(default=0)
 
+    class Meta:
+        permissions = [
+            ('can_manage_product', "Can manage product")
+        ]
+
     def __str__(self):
         return self.name
 
 class Order(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
+    is_cancelled = models.BooleanField(default=False)
 
     def __str__(self):
         return f'Order #{self.pk}'

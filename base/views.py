@@ -1,20 +1,31 @@
 from django.db import transaction
 from django.shortcuts import get_object_or_404, render
 from rest_framework import status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from .models import Order, OrderItem, Product
+from .permissions import CanManageProduct, IsAdminUser
 from .serializers import (OrderCreateSerializer, OrderReadSerializer,
                           ProductSerializer)
 
 
 @api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
 def product_list(request):
     if request.method == 'GET':
         products = Product.objects.all()
-        serializer = ProductSerializer(products, many=True)
-        return Response(serializer.data)
+
+        paginator = PageNumberPagination()
+        paginator.page_size = 2
+
+        result_page = paginator.paginate_queryset(products, request)
+
+        serializer = ProductSerializer(result_page, many=True)
+
+        return paginator.get_paginated_response(serializer.data)
 
     elif request.method == 'POST':
         serializer = ProductSerializer(data=request.data)
@@ -27,6 +38,23 @@ def product_list(request):
             )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+@api_view(['POST'])
+@permission_classes([CanManageProduct])
+def create_product(request):
+    serializer = ProductSerializer(data=request.data)
+
+    if serializer.is_valid():
+        product = serializer.save()
+
+        return Response(
+            ProductSerializer(product).data,
+            status=status.HTTP_201_CREATED
+        )
+
+    return Response(
+        serializer.errors,
+        status=status.HTTP_400_BAD_REQUEST
+    )
 
 @api_view(['GET'])
 def product_detail(request, pk):
@@ -70,6 +98,7 @@ def update_product(request, pk):
     )
 
 @api_view(['DELETE'])
+@permission_classes([IsAdminUser])
 def delete_product(request, pk):
     # try:
     #     product = Product.objects.get(pk=pk)
@@ -137,11 +166,13 @@ def order_list(request):
     elif request.method == 'POST':
         input_serializer = OrderCreateSerializer(data=request.data)
 
-        if not input_serializer.is_valid():
-            return Response(
-                input_serializer.errors,
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # if not input_serializer.is_valid():
+        #     return Response(
+        #         input_serializer.errors,
+        #         status=status.HTTP_400_BAD_REQUEST
+        #     )
+        input_serializer.is_valid(raise_exception=True)
+
         items = input_serializer.validated_data['items']
 
         quantities = {}
@@ -215,6 +246,38 @@ def order_list(request):
             },
             status=status.HTTP_201_CREATED
         )
+
+@api_view(['GET'])
+def cancel_order(request, pk):
+    with transaction.atomic():
+        order = get_object_or_404(
+            Order.objects.select_for_update(),
+            pk=pk
+        )
+
+        if order.is_cancelled:
+            return Response(
+                {'error': 'Order already cancelled.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        items = order.items.select_related('product')
+
+        for item in items:
+            product = Product.objects.select_for_update().get(
+                pk=item.product_id
+            )
+
+            product.stock += item.quantity
+            product.save(update_fields=['stock'])
+
+        order.is_cancelled = True
+        order.save(update_fields=['is_cancelled'])
+
+    return Response(
+        {'message': 'Order cancelled successfully.'},
+        status=status.HTTP_200_OK
+    )
 
 # @api_view(['POST'])
 # def create_order(request):
