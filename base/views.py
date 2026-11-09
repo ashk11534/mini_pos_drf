@@ -1,11 +1,16 @@
+from types import SimpleNamespace
+
 from django.db import transaction
 from django.shortcuts import get_object_or_404, render
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from .filters import ProductFilter
 from .models import Order, OrderItem, Product
 from .permissions import CanManageProduct, IsAdminUser
 from .serializers import (OrderCreateSerializer, OrderReadSerializer,
@@ -17,6 +22,45 @@ from .serializers import (OrderCreateSerializer, OrderReadSerializer,
 def product_list(request):
     if request.method == 'GET':
         products = Product.objects.all()
+
+        filter_config = SimpleNamespace(
+            filterset_class=ProductFilter,
+            filterset_fields=None,
+            search_fields=['name'],
+            ordering_fields=['price', 'name'],
+            ordering='-price'
+        )
+
+        filter_backends = [
+            DjangoFilterBackend(),
+            SearchFilter(),
+            OrderingFilter()
+        ]
+
+        for backend in filter_backends:
+            products = backend.filter_queryset(
+                request,
+                products,
+                filter_config
+            )
+
+        # ordering = request.query_params.get('ordering')
+
+        # if ordering in ['price', '-price', 'name', '-name']:
+        #     products = products.order_by(ordering)
+
+        # search = request.query_params.get('search')
+
+        # if search:
+        #     products = products.filter(name__icontains=search)
+
+        # in_stock = request.query_params.get('in_stock')
+
+        # if in_stock == 'true':
+        #     products = products.filter(stock__gt=0)
+
+        # elif in_stock == 'false':
+        #     products = products.filter(stock=0)
 
         paginator = PageNumberPagination()
         paginator.page_size = 2
